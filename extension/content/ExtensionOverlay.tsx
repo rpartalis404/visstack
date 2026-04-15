@@ -3,7 +3,6 @@ import type { AudioEngine } from '../../src/audio/AudioEngine';
 import { VISUALIZATIONS, getPluginById } from '../../src/visualizations/registry';
 import { defaultParamValues, type ParamValues } from '../../src/visualizations/types';
 import { VisualizerHost } from '../../src/ui/VisualizerHost';
-import type { MountContext } from './mount';
 
 const STORAGE_KEY = 'soundstack-ext-state-v1';
 
@@ -11,9 +10,17 @@ interface Persisted {
   activeId: string;
 }
 
+/**
+ * The overlay only cares about which mount context it's rendering in, so
+ * it can phrase the close-button tooltip correctly. It does NOT need the
+ * content-script-side handles (imageEl / slot) because teardown is owned
+ * by the outer mount module, not by React.
+ */
+export type OverlayMode = 'live365-hero' | 'overlay';
+
 interface Props {
   engine: AudioEngine;
-  context: MountContext;
+  context: { mode: OverlayMode };
   onClose: () => void;
 }
 

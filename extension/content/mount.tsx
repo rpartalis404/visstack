@@ -1,102 +1,99 @@
 /**
- * Visualizer mount module.
+ * Visualizer host module (content-script side).
  *
  * Creates the DOM host (either inline replacing the live365 hero image, or
- * a floating overlay), builds a Shadow DOM inside it for style isolation,
- * wires up the audio pipeline from the captured tab stream, and renders
- * the visualizer React tree into the shadow root.
+ * a fixed-position overlay), builds a Shadow DOM inside it for style
+ * isolation, then injects a sandboxed <iframe> that loads viz.html from
+ * our extension origin.
+ *
+ * Why an iframe?
+ *   Butterchurn uses `new Function()` / `eval()` to compile MilkDrop
+ *   preset expressions. MV3 forbids `unsafe-eval` in both content scripts
+ *   and regular extension pages — they cannot opt out. Pages declared in
+ *   manifest.sandbox.pages get a custom CSP that CAN allow `unsafe-eval`,
+ *   so that's where the heavy visualization code lives. The content
+ *   script's job is now just DOM placement + lifecycle.
  */
-
-import { createRoot, type Root } from 'react-dom/client';
-import { StrictMode } from 'react';
-import { AudioEngine } from '../../src/audio/AudioEngine';
-import { ExtensionOverlay } from './ExtensionOverlay';
 
 /** Handle returned to the content script entry for cleanup. */
 export interface VizRoot {
   destroy(): void;
 }
 
+type InboundMessage = { type: 'SOUNDSTACK_CLOSE' };
+
+function isCloseMessage(v: unknown): v is InboundMessage {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    (v as { type?: unknown }).type === 'SOUNDSTACK_CLOSE'
+  );
+}
+
 /**
- * Entry point: given a tabCapture streamId, build the host element, create
- * the audio graph, and mount the React overlay. Returns a handle for
- * teardown on subsequent activation (which toggles the viz off).
+ * Entry point: given a tabCapture streamId, build the host element and
+ * inject the viz iframe. The iframe owns audio capture, playback and
+ * rendering from here on — this side just listens for a CLOSE message
+ * to tear itself down.
  */
 export async function mountVisualizer(streamId: string): Promise<VizRoot> {
   const context = detectContext();
   const host = buildHost(context);
   const shadow = host.shadow;
 
-  // Acquire the tab's audio MediaStream using the streamId. Content scripts
-  // use the legacy `chromeMediaSource: 'tab'` constraint syntax for this.
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      // @ts-expect-error — these are Chrome-specific constraint properties
-      // that aren't in the standard TypeScript lib.dom types.
-      mandatory: {
-        chromeMediaSource: 'tab',
-        chromeMediaSourceId: streamId,
-      },
-    },
-    video: false,
-  });
+  const iframe = document.createElement('iframe');
+  // Pass streamId + context mode through the hash — never the query string
+  // (hashes don't hit server logs or Referer headers; not that it matters
+  // on a chrome-extension:// URL, but it's the right habit).
+  const src = new URL(chrome.runtime.getURL('viz.html'));
+  src.hash = new URLSearchParams({
+    streamId,
+    mode: context.mode,
+  }).toString();
+  iframe.src = src.toString();
+  iframe.setAttribute('title', 'Soundstack Visualizer');
+  // allow= grants feature policies that sandboxed docs would otherwise
+  // have denied. autoplay lets our playthrough <audio> element start
+  // without a user gesture.
+  iframe.setAttribute('allow', 'autoplay');
+  iframe.style.cssText = [
+    'position: absolute',
+    'inset: 0',
+    'width: 100%',
+    'height: 100%',
+    'border: 0',
+    'display: block',
+    'background: transparent',
+  ].join(';');
 
-  // Build the engine and route the captured stream through it. Engine is
-  // the same one the webapp uses — no special-casing for the extension.
-  const engine = new AudioEngine();
-  engine.setSourceMediaStream(stream);
-  await engine.ensureRunning();
-
-  // IMPORTANT: tabCapture mutes the source tab's audio by default — we must
-  // re-pipe the captured stream back to the system output or the user
-  // hears nothing. This is unlike the getDisplayMedia case where the
-  // source tab keeps playing.
-  //
-  // We bridge it back by playing the raw MediaStream through a hidden
-  // <audio> element on the page. That element plays independently of the
-  // AnalyserNode, so we get both: user hears audio + we analyze it.
-  const playthrough = document.createElement('audio');
-  playthrough.srcObject = stream;
-  playthrough.autoplay = true;
-  // Keep it out of the DOM layout — it still plays when detached
-  playthrough.style.cssText = 'display:none';
-  document.body.appendChild(playthrough);
-  await playthrough.play().catch((e) => {
-    console.warn('[Soundstack] playthrough autoplay blocked:', e);
-  });
-
-  // Mount React into the shadow root. We pass a container div so the
-  // existing VisualizerHost can size itself naturally.
   const reactHost = shadow.querySelector<HTMLDivElement>('[data-viz-root]');
   if (!reactHost) throw new Error('[Soundstack] viz root missing');
+  reactHost.appendChild(iframe);
 
-  const root: Root = createRoot(reactHost);
-  root.render(
-    <StrictMode>
-      <ExtensionOverlay
-        engine={engine}
-        context={context}
-        onClose={() => destroy()}
-      />
-    </StrictMode>,
-  );
+  // Bridge close events from the iframe. We authenticate the sender by
+  // identity (event.source), not origin — sandboxed iframes have a null
+  // origin, so origin checks are useless here.
+  const onMessage = (event: MessageEvent) => {
+    if (event.source !== iframe.contentWindow) return;
+    if (isCloseMessage(event.data)) destroy();
+  };
+  window.addEventListener('message', onMessage);
+
+  // Escape closes from the host page too — the iframe catches it when
+  // focused, but if focus is on the host we still want the shortcut.
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') destroy();
+  };
+  window.addEventListener('keydown', onKey);
 
   let destroyed = false;
   const destroy = () => {
     if (destroyed) return;
     destroyed = true;
-    try {
-      root.unmount();
-    } catch {
-      // ignore
-    }
-    // Stop audio tracks so the browser drops the tab-capture indicator
-    stream.getTracks().forEach((t) => t.stop());
-    playthrough.pause();
-    playthrough.srcObject = null;
-    playthrough.remove();
+    window.removeEventListener('message', onMessage);
+    window.removeEventListener('keydown', onKey);
+    iframe.remove();
     host.teardown();
-    engine.destroy();
   };
 
   return { destroy };
@@ -177,31 +174,29 @@ interface HostHandle {
 }
 
 /**
- * Create the host element + shadow root for the visualizer to live inside.
+ * Create the host element + shadow root for the visualizer iframe to live
+ * inside.
  *
  * live365-hero:
  *   The original <img> is kept in the DOM but display:none'd, and a new
  *   <div> is inserted right before it. On teardown we remove the div and
- *   restore the image's display. Any layout rules the live365 page has on
- *   the parent continue to apply — we just swap the visible child.
+ *   restore the image's display.
  *
  * overlay:
- *   A fixed-position full-viewport <div> appended to document.body.
- *   Highest z-index we dare use. Removed on teardown.
+ *   A fixed-position full-viewport <div> appended to document.documentElement
+ *   (so it sits above body-level stacking contexts).
  */
 function buildHost(context: MountContext): HostHandle {
   const outer = document.createElement('div');
   outer.setAttribute('data-soundstack', 'host');
 
   if (context.mode === 'live365-hero') {
-    // Match the image's rendered size exactly — the shadow canvas will
-    // then resize itself to fit via ResizeObserver.
     outer.style.cssText = [
       'position: relative',
       'width: 100%',
       'height: 100%',
       'overflow: hidden',
-      'isolation: isolate', // new stacking context
+      'isolation: isolate',
     ].join(';');
     const prevDisplay = context.imageEl.style.display;
     context.imageEl.style.display = 'none';
@@ -240,7 +235,7 @@ function buildHost(context: MountContext): HostHandle {
 
 /**
  * Static markup for the shadow root. A single full-size div acts as the
- * React mount point; styles below isolate typography from the host page.
+ * iframe mount point; styles below isolate typography from the host page.
  */
 function shadowMarkup(): string {
   return `
@@ -250,8 +245,6 @@ function shadowMarkup(): string {
         display: block;
         width: 100%;
         height: 100%;
-        font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-        color: #fff;
       }
       .root {
         position: relative;
