@@ -3,6 +3,7 @@ import type { AudioEngine } from '../../src/audio/AudioEngine';
 import { VISUALIZATIONS, getPluginById } from '../../src/visualizations/registry';
 import { defaultParamValues, type ParamValues } from '../../src/visualizations/types';
 import { VisualizerHost } from '../../src/ui/VisualizerHost';
+import type { MountContext } from './mount';
 
 const STORAGE_KEY = 'soundstack-ext-state-v1';
 
@@ -11,16 +12,21 @@ interface Persisted {
 }
 
 /**
- * The overlay only cares about which mount context it's rendering in, so
- * it can phrase the close-button tooltip correctly. It does NOT need the
- * content-script-side handles (imageEl / slot) because teardown is owned
- * by the outer mount module, not by React.
+ * Plugins available inside the extension. Filters out any plugin flagged
+ * `evalRequired` — the content script runs under the host page's CSP,
+ * which on live365 (and most strict sites) forbids 'unsafe-eval'. Today
+ * that only excludes the Butterchurn-backed "classic-trip" plugin.
  */
-export type OverlayMode = 'live365-hero' | 'overlay';
+const EXT_VISUALIZATIONS = VISUALIZATIONS.filter((v) => !v.evalRequired);
+
+function getExtPluginById(id: string) {
+  const plugin = getPluginById(id);
+  return plugin && !plugin.evalRequired ? plugin : undefined;
+}
 
 interface Props {
   engine: AudioEngine;
-  context: { mode: OverlayMode };
+  context: MountContext;
   onClose: () => void;
 }
 
@@ -46,7 +52,7 @@ export function ExtensionOverlay({ engine, context, onClose }: Props) {
 
   const [activeId, setActiveId] = useState<string>(() => {
     const id = persisted.activeId;
-    return id && getPluginById(id) ? id : VISUALIZATIONS[0].id;
+    return id && getExtPluginById(id) ? id : EXT_VISUALIZATIONS[0].id;
   });
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -59,7 +65,7 @@ export function ExtensionOverlay({ engine, context, onClose }: Props) {
     }
   }, [activeId]);
 
-  const activePlugin = getPluginById(activeId) ?? VISUALIZATIONS[0];
+  const activePlugin = getExtPluginById(activeId) ?? EXT_VISUALIZATIONS[0];
 
   // Always start with the plugin's declared defaults in the extension —
   // no live param tweaking here, just a stable known-good starting point.
@@ -117,7 +123,7 @@ export function ExtensionOverlay({ engine, context, onClose }: Props) {
 
         {menuOpen && (
           <div style={menuStyle} role="menu">
-            {VISUALIZATIONS.map((viz) => (
+            {EXT_VISUALIZATIONS.map((viz) => (
               <button
                 key={viz.id}
                 type="button"

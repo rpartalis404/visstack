@@ -24,12 +24,9 @@
       "run_at": "document_idle"
     }
   ],
-  "sandbox": {
-    "pages": ["viz.html"]
-  },
   "web_accessible_resources": [
     {
-      "resources": ["viz.html", "assets/*"],
+      "resources": ["assets/*"],
       "matches": ["<all_urls>"]
     }
   ]

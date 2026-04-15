@@ -48,6 +48,14 @@ export interface VisualizationPlugin {
   name: string;
   description: string;
   params: ParamSchema;
+  /**
+   * Set to `true` for plugins whose runtime compiles code via eval() /
+   * new Function() — e.g. anything wrapping Butterchurn's MilkDrop preset
+   * engine. These cannot run in the Chrome extension context because
+   * live365 and most hosts enforce a strict CSP without 'unsafe-eval',
+   * so ExtensionOverlay filters them out of the switcher.
+   */
+  evalRequired?: boolean;
   mount(container: HTMLElement, ctx: VisualizerContext): MountedViz;
 }
 
