@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Soundstack Visualizer",
+  "description": "Audio-reactive visualizations overlaid on any page. On live365 station pages, replaces the hero image.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Activate Soundstack Visualizer"
+  },
+  "background": {
+    "service_worker": "background.ts",
+    "type": "module"
+  },
+  "permissions": [
+    "tabCapture",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/main.ts"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
