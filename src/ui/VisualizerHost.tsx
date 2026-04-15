@@ -5,7 +5,22 @@ import type {
   ParamValues,
   VisualizationPlugin,
 } from '../visualizations/types';
-import styles from '../App.module.css';
+
+/**
+ * Inline style for the canvas container. Previously this used a CSS module
+ * (App.module.css → .stageCanvas), but that caused Vite to emit a CSS chunk
+ * for this component, which in turn tripped up the Chrome extension build
+ * (the content script dynamic-import would try to preload the chunk CSS
+ * from the host page's origin and fail). Inlining eliminates the chunk
+ * entirely with no behavior change.
+ */
+const STAGE_STYLE: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  width: '100%',
+  height: '100%',
+  display: 'block',
+};
 
 interface Props {
   engine: AudioEngine;
@@ -94,5 +109,5 @@ export function VisualizerHost({ engine, plugin, params, onStatus }: Props) {
     return () => cancelAnimationFrame(raf);
   }, [engine]);
 
-  return <div ref={containerRef} className={styles.stageCanvas} />;
+  return <div ref={containerRef} style={STAGE_STYLE} />;
 }

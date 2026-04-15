@@ -27,6 +27,29 @@ declare global {
   }
 }
 
+/**
+ * Defensively swallow Vite's preload-error events.
+ *
+ * When the content script dynamic-imports a chunk, Vite also tries to
+ * preload any CSS that chunk depends on. In a content-script context the
+ * preload URL gets resolved against the host page's origin (e.g. live365)
+ * rather than the chrome-extension:// origin, so the preload 404s. The
+ * failed preload rejects the dynamic import and aborts activation.
+ *
+ * Vite dispatches `vite:preloadError` before throwing — calling
+ * preventDefault() tells it to skip the throw. The real JS chunk load
+ * uses crxjs's URL rewriting and works fine; only the CSS preload path
+ * fails. Since we don't ship any CSS in the dynamic chunks today (all
+ * styles are inline), this is defense-in-depth for future changes.
+ */
+window.addEventListener('vite:preloadError', (event) => {
+  event.preventDefault();
+  console.warn(
+    '[Soundstack] suppressed vite:preloadError (harmless in content scripts):',
+    (event as unknown as { payload?: Error }).payload,
+  );
+});
+
 type ActivateMessage = {
   type: 'SOUNDSTACK_ACTIVATE';
   streamId: string;
