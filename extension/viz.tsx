@@ -47,8 +47,14 @@ async function boot(): Promise<void> {
   }
 
   // Clear the hash before anyone else can observe it. Doesn't change the
-  // iframe's document, just cleans the URL bar for debugging.
-  history.replaceState(null, '', location.pathname);
+  // iframe's document, just cleans the URL bar for debugging. At the
+  // sandbox page's null origin, replaceState may throw — not worth
+  // aborting over.
+  try {
+    history.replaceState(null, '', location.pathname);
+  } catch {
+    // sandboxed null-origin context — cosmetic only, ignore
+  }
 
   // Acquire the tab's audio. Content scripts use this legacy constraint
   // syntax for tabCapture — same story here since the iframe is just
