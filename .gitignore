@@ -4,6 +4,9 @@ dist
 *.local
 .vite
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Local tooling — Claude Code session config
 .claude/
 
