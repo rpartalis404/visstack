@@ -336,6 +336,11 @@ export function App() {
           currentUrl={currentUrl}
           curatedPresets={CURATED_PRESETS}
           recentPresets={recentPresets}
+          // URL input + presets require the Vite dev proxy for cross-origin
+          // CORS. GitHub Pages has no server-side proxy, so hide the URL
+          // paths in production — visitors are funneled to the Capture +
+          // Load File flows which work on any static host.
+          showUrlInput={import.meta.env.DEV}
         />
       </div>
 

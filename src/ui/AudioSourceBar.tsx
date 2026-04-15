@@ -19,6 +19,11 @@ interface Props {
   currentUrl: string;
   curatedPresets: readonly StreamPreset[];
   recentPresets: readonly StreamPreset[];
+  /** Whether to show URL input + preset dropdown + Load URL + Bookmark.
+   *  Off in production (GitHub Pages has no proxy so those paths break).
+   *  Production users are funneled to the Capture + File paths which work
+   *  without a server-side proxy. */
+  showUrlInput: boolean;
 }
 
 export function AudioSourceBar({
@@ -36,6 +41,7 @@ export function AudioSourceBar({
   currentUrl,
   curatedPresets,
   recentPresets,
+  showUrlInput,
 }: Props) {
   const [url, setUrl] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
@@ -97,30 +103,48 @@ export function AudioSourceBar({
         </button>
       )}
 
-      <div className={styles.urlWrap}>
-        <input
-          ref={inputRef}
-          type="text"
-          className={styles.urlInput}
-          placeholder="Stream or file URL — click for presets"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          onFocus={() => setShowDropdown(true)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              submitUrl();
-            } else if (e.key === 'Escape') {
-              setShowDropdown(false);
-            }
-          }}
-        />
-        {showDropdown && (
-          <div className={styles.urlDropdown} ref={dropdownRef} role="listbox">
-            {recentPresets.length > 0 && (
-              <>
-                <div className={styles.dropdownLabel}>Recent</div>
-                {recentPresets.map((p) => (
+      {showUrlInput ? (
+        <>
+          <div className={styles.urlWrap}>
+            <input
+              ref={inputRef}
+              type="text"
+              className={styles.urlInput}
+              placeholder="Stream or file URL — click for presets"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onFocus={() => setShowDropdown(true)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  submitUrl();
+                } else if (e.key === 'Escape') {
+                  setShowDropdown(false);
+                }
+              }}
+            />
+            {showDropdown && (
+              <div className={styles.urlDropdown} ref={dropdownRef} role="listbox">
+                {recentPresets.length > 0 && (
+                  <>
+                    <div className={styles.dropdownLabel}>Recent</div>
+                    {recentPresets.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className={styles.dropdownItem}
+                        onClick={() => pickPreset(p)}
+                      >
+                        <span className={styles.dropdownItemName}>{p.name}</span>
+                        <span className={styles.dropdownItemDesc}>
+                          {p.description}
+                        </span>
+                      </button>
+                    ))}
+                  </>
+                )}
+                <div className={styles.dropdownLabel}>Curated streams</div>
+                {curatedPresets.map((p) => (
                   <button
                     key={p.id}
                     type="button"
@@ -131,31 +155,23 @@ export function AudioSourceBar({
                     <span className={styles.dropdownItemDesc}>{p.description}</span>
                   </button>
                 ))}
-              </>
+              </div>
             )}
-            <div className={styles.dropdownLabel}>Curated streams</div>
-            {curatedPresets.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className={styles.dropdownItem}
-                onClick={() => pickPreset(p)}
-              >
-                <span className={styles.dropdownItemName}>{p.name}</span>
-                <span className={styles.dropdownItemDesc}>{p.description}</span>
-              </button>
-            ))}
           </div>
-        )}
-      </div>
 
-      <button
-        type="button"
-        className={styles.secondaryButton}
-        onClick={submitUrl}
-      >
-        Load URL
-      </button>
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            onClick={submitUrl}
+          >
+            Load URL
+          </button>
+        </>
+      ) : (
+        // Production: no URL input — show a spacer so the top bar doesn't
+        // collapse when Capture/File are the only controls
+        <div className={styles.urlWrap} aria-hidden="true" />
+      )}
 
       <label className={styles.fileButton}>
         Load File
@@ -188,7 +204,7 @@ export function AudioSourceBar({
         {isCapturing ? '■ Stop' : '🎙 Capture'}
       </button>
 
-      {isCurrentBookmarkable && (
+      {showUrlInput && isCurrentBookmarkable && (
         <button
           type="button"
           className={styles.iconButton}
@@ -201,7 +217,11 @@ export function AudioSourceBar({
       )}
 
       <div className={styles.sourceLabel} title={currentLabel}>
-        {currentLabel ? shortLabelFromUrl(currentLabel) : '—'}
+        {currentLabel
+          ? shortLabelFromUrl(currentLabel)
+          : showUrlInput
+            ? '—'
+            : 'Click 🎙 Capture to visualize a Chrome tab'}
       </div>
 
       <button
