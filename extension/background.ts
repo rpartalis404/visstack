@@ -29,7 +29,14 @@ chrome.action.onClicked.addListener(async (tab) => {
   let streamId: string;
   try {
     streamId = await chrome.tabCapture.getMediaStreamId({
+      // The tab whose audio we want to capture
       targetTabId: tab.id,
+      // The tab whose content script will call getUserMedia() with this id.
+      // Without this, Chrome rejects the downstream getUserMedia with
+      // "AbortError: Error starting tab capture" because streamIds issued
+      // to a service worker aren't usable in content scripts by default —
+      // they have to be scoped to a specific consumer tab explicitly.
+      consumerTabId: tab.id,
     });
   } catch (err) {
     console.error('[Soundstack] getMediaStreamId failed:', err);
