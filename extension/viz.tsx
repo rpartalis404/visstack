@@ -104,10 +104,27 @@ async function boot(): Promise<void> {
   async function startEngine(stream: MediaStream): Promise<void> {
     const engine = new AudioEngine();
     // routeToOutput: true — connect analyser to ctx.destination so audio
-    // actually plays. Web Audio routing isn't subject to Chrome's
-    // autoplay policy once the context is resumed from a user gesture.
+    // actually plays back to the user's speakers.
     engine.setSourceMediaStream(stream, { routeToOutput: true });
-    await engine.ensureRunning();
+
+    // AudioContext.resume() requires user activation. The toolbar-icon
+    // click grants activation to the content-script frame (which is why
+    // getUserMedia up there worked), but it doesn't propagate into this
+    // sandboxed iframe — it runs at a null origin. Try resume anyway in
+    // case a gesture is somehow available, and fall back to a one-shot
+    // click-to-start overlay when Chrome blocks us.
+    try {
+      await engine.ensureRunning();
+    } catch (err) {
+      console.warn('[Soundstack viz] initial resume blocked, awaiting click:', err);
+      await waitForUserClickToStart();
+      try {
+        await engine.ensureRunning();
+      } catch (err2) {
+        fatal(`audio context refused to start: ${(err2 as Error).message}`);
+        return;
+      }
+    }
 
     const [track] = stream.getAudioTracks();
     if (track) {
@@ -150,6 +167,53 @@ async function boot(): Promise<void> {
 
   // Let the parent know we're ready to negotiate.
   postToParent({ type: 'VIZ_READY' });
+}
+
+/**
+ * Render a centered "click to enable audio" overlay and resolve once the
+ * user clicks. Used when Chrome's autoplay policy blocks our first
+ * attempt to resume the AudioContext.
+ */
+function waitForUserClickToStart(): Promise<void> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.setAttribute('data-soundstack', 'start-overlay');
+    overlay.style.cssText = [
+      'position: absolute',
+      'inset: 0',
+      'display: flex',
+      'align-items: center',
+      'justify-content: center',
+      'background: rgba(14,14,21,0.85)',
+      'color: #fff',
+      "font: 14px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif",
+      'cursor: pointer',
+      'z-index: 9999',
+      '-webkit-backdrop-filter: blur(8px)',
+      'backdrop-filter: blur(8px)',
+    ].join(';');
+    overlay.innerHTML = `
+      <div style="padding: 14px 20px; border: 1px solid rgba(255,255,255,0.12);
+                  border-radius: 8px; background: rgba(10,10,16,0.65);
+                  text-align: center;">
+        <div style="font-weight: 500; margin-bottom: 4px;">
+          Click to enable audio
+        </div>
+        <div style="opacity: 0.65; font-size: 12px;">
+          Chrome blocks autoplay across sandboxed frames
+        </div>
+      </div>
+    `;
+    overlay.addEventListener(
+      'click',
+      () => {
+        overlay.remove();
+        resolve();
+      },
+      { once: true },
+    );
+    document.body.appendChild(overlay);
+  });
 }
 
 function fatal(message: string): void {
