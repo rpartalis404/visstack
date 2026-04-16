@@ -117,8 +117,10 @@ export const classicTripPlugin: VisualizationPlugin = {
   name: 'Classic Trip',
   description: 'MilkDrop-style fluid psychedelia (Butterchurn presets).',
   // Butterchurn compiles MilkDrop preset expressions via new Function(),
-  // which violates strict-CSP pages like live365. The extension filters
-  // this plugin out of its switcher; the webapp runs it fine.
+  // which violates strict-CSP pages like live365. In the extension this
+  // plugin runs inside a sandboxed iframe (manifest.sandbox.pages) whose
+  // CSP allows unsafe-eval; the flag is kept as metadata in case future
+  // hosts need to know.
   evalRequired: true,
   params: {
     preset: {
