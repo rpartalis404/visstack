@@ -94,18 +94,32 @@ export class AudioEngine {
   }
 
   /**
-   * Wire a MediaStream (e.g. from `navigator.mediaDevices.getDisplayMedia`)
-   * as the audio source. Audio flows: stream → MediaStreamSource → analyser.
+   * Wire a MediaStream (e.g. from `navigator.mediaDevices.getDisplayMedia`
+   * or `chrome.tabCapture`) as the audio source. Audio flows:
+   *   stream → MediaStreamSource → analyser
    *
-   * Crucially, the analyser is NOT connected to ctx.destination in stream
-   * mode — the captured tab/screen is already playing audio through the
-   * system's regular output, and routing it through our destination would
-   * duplicate it (echo, possible feedback).
+   * The caller decides whether the analyser should also drive the audio
+   * destination (speakers):
    *
-   * Returns the audio MediaStreamTrack so the caller can listen for `ended`
-   * (e.g. user clicks "Stop sharing" in the browser banner).
+   *   - getDisplayMedia (webapp): `routeToOutput: false` (default). The
+   *     source tab/screen is already playing through system output; a
+   *     destination connection here would duplicate it (echo, feedback).
+   *
+   *   - tabCapture (extension): `routeToOutput: true`. Chrome mutes the
+   *     source tab's speaker output while the tabCapture stream is being
+   *     consumed, so without a destination connection the user gets
+   *     silence. Routing the analyser to destination restores playback.
+   *     Relying on a hidden `<audio srcObject>` playthrough here is
+   *     unreliable because Chrome's autoplay policy may block `.play()`
+   *     by the time the async activation hops finish.
+   *
+   * Returns the audio MediaStreamTrack so the caller can listen for
+   * `ended` (e.g. user clicks "Stop sharing" in the browser banner).
    */
-  setSourceMediaStream(stream: MediaStream): MediaStreamTrack {
+  setSourceMediaStream(
+    stream: MediaStream,
+    options: { routeToOutput?: boolean } = {},
+  ): MediaStreamTrack {
     const audioTracks = stream.getAudioTracks();
     if (audioTracks.length === 0) {
       throw new Error(
@@ -118,7 +132,9 @@ export class AudioEngine {
     this.currentStream = stream;
     this.streamSource = this.ctx.createMediaStreamSource(stream);
     this.streamSource.connect(this.analyser);
-    // Deliberately no analyser → destination connection here
+    if (options.routeToOutput) {
+      this.analyser.connect(this.ctx.destination);
+    }
 
     return audioTracks[0];
   }

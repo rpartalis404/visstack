@@ -50,29 +50,16 @@ export async function mountVisualizer(streamId: string): Promise<VizRoot> {
     video: false,
   });
 
-  // Build the engine and route the captured stream through it. Engine is
-  // the same one the webapp uses — no special-casing for the extension.
+  // Build the engine and route the captured stream through it. Pass
+  // routeToOutput: true so the analyser also drives ctx.destination —
+  // tabCapture mutes the source tab's speaker output, so without a
+  // destination connection we get silence. A hidden <audio srcObject>
+  // playthrough would be simpler but Chrome's autoplay policy tends to
+  // block its .play() call by the time async activation hops have
+  // finished, leaving the user on a silent page.
   const engine = new AudioEngine();
-  engine.setSourceMediaStream(stream);
+  engine.setSourceMediaStream(stream, { routeToOutput: true });
   await engine.ensureRunning();
-
-  // IMPORTANT: tabCapture mutes the source tab's audio by default — we must
-  // re-pipe the captured stream back to the system output or the user
-  // hears nothing. This is unlike the getDisplayMedia case where the
-  // source tab keeps playing.
-  //
-  // We bridge it back by playing the raw MediaStream through a hidden
-  // <audio> element on the page. That element plays independently of the
-  // AnalyserNode, so we get both: user hears audio + we analyze it.
-  const playthrough = document.createElement('audio');
-  playthrough.srcObject = stream;
-  playthrough.autoplay = true;
-  // Keep it out of the DOM layout — it still plays when detached
-  playthrough.style.cssText = 'display:none';
-  document.body.appendChild(playthrough);
-  await playthrough.play().catch((e) => {
-    console.warn('[Soundstack] playthrough autoplay blocked:', e);
-  });
 
   // Mount React into the shadow root. We pass a container div so the
   // existing VisualizerHost can size itself naturally.
@@ -101,9 +88,6 @@ export async function mountVisualizer(streamId: string): Promise<VizRoot> {
     }
     // Stop audio tracks so the browser drops the tab-capture indicator
     stream.getTracks().forEach((t) => t.stop());
-    playthrough.pause();
-    playthrough.srcObject = null;
-    playthrough.remove();
     host.teardown();
     engine.destroy();
   };
@@ -201,6 +185,16 @@ interface HostHandle {
 function buildHost(context: MountContext): HostHandle {
   const outer = document.createElement('div');
   outer.setAttribute('data-soundstack', 'host');
+
+  // Swallow pointer-event bubbling to ancestors. On live365 the hero image
+  // slot is wrapped in a link / click handler that captures our viz-
+  // switcher clicks before they reach the React buttons. Containing the
+  // events at the outer boundary keeps our UI interactive without having
+  // to guess at the host page's layout.
+  const swallow = (e: Event) => e.stopPropagation();
+  for (const type of ['click', 'mousedown', 'mouseup', 'pointerdown', 'pointerup'] as const) {
+    outer.addEventListener(type, swallow);
+  }
 
   if (context.mode === 'live365-hero') {
     // Match the image's rendered size exactly — the shadow canvas will
