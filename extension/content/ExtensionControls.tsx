@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { VISUALIZATIONS, getPluginById } from '../../src/visualizations/registry';
+import { thumbnailFor } from '../../src/visualizations/thumbnails';
 import type { ParamValues } from '../../src/visualizations/types';
 import { ParamsPanel } from './ParamsPanel';
 import type { OverlayMode } from './ExtensionOverlay';
@@ -244,19 +245,20 @@ export function ExtensionControls({
                     ? 'ss-menu-item ss-menu-item--active'
                     : 'ss-menu-item'
                 }
+                // Thumbnail background — each plugin gets a signature
+                // gradient (see src/visualizations/thumbnails.ts).
+                style={{ backgroundImage: thumbnailFor(viz.id) }}
                 onClick={() => {
                   onChangeViz(viz.id);
                   setMenuOpen(false);
                 }}
               >
-                {isActive ? (
+                {isActive && (
                   <span className="ss-eq" aria-hidden>
                     <span />
                     <span />
                     <span />
                   </span>
-                ) : (
-                  <span className="ss-eq ss-eq--placeholder" aria-hidden />
                 )}
                 <span className="ss-menu-item-label">{viz.name}</span>
               </button>
@@ -628,10 +630,13 @@ const CSS = `
   position: absolute;
   top: 54px;
   right: 12px;
-  width: min(400px, calc(100vw - 24px));
-  max-height: min(70vh, 560px);
+  /* Fixed-column grid at this width (420px) fits 3 tiles per row with
+     the extension menu's typical anchor. On narrow viewports we fall
+     back to 2 columns so cards stay legible. */
+  width: min(440px, calc(100vw - 24px));
+  max-height: min(72vh, 600px);
   overflow-y: auto;
-  padding: 6px;
+  padding: 8px;
   background: rgba(12, 12, 20, 0.92);
   backdrop-filter: blur(30px) saturate(1.5);
   -webkit-backdrop-filter: blur(30px) saturate(1.5);
@@ -639,8 +644,8 @@ const CSS = `
   border-radius: var(--ss-radius-lg);
   box-shadow: var(--ss-shadow-lg);
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 2px;
+  grid-template-columns: repeat(auto-fill, minmax(125px, 1fr));
+  gap: 6px;
   pointer-events: auto;
   animation: ss-pop 200ms var(--ss-ease-out-expo);
 
@@ -666,57 +671,116 @@ const CSS = `
   to   { opacity: 1; transform: translateY(0)    scale(1); }
 }
 
+/* Menu item = thumbnail tile.
+ *
+ * The background is set inline from thumbnailFor(viz.id) — a signature
+ * CSS gradient per plugin. The ::after scrim ensures the name stays
+ * readable regardless of which gradient is underneath. The label is
+ * absolute-positioned at the bottom so tile sizing is governed by the
+ * height rule below, not by content.
+ */
 .ss-menu-item {
+  position: relative;
   appearance: none;
-  background: transparent;
-  color: var(--ss-text-primary);
+  color: #fff;
   border: 1px solid transparent;
-  border-radius: var(--ss-radius-sm);
+  border-radius: 10px;
   cursor: pointer;
   font: inherit;
-  font-size: 12.5px;
-  font-weight: 500;
-  letter-spacing: -0.005em;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 40px;
-  padding: 8px 12px;
-  text-align: left;
+  padding: 0;
+  height: 72px;
   overflow: hidden;
   pointer-events: auto;
-  transition: background 140ms var(--ss-ease),
-              border-color 140ms var(--ss-ease),
-              color 140ms var(--ss-ease);
+  background-color: var(--ss-surface-1);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  transition: transform 180ms var(--ss-ease-out-expo),
+              border-color 160ms var(--ss-ease),
+              box-shadow 200ms var(--ss-ease);
 }
-.ss-menu-item:hover { background: var(--ss-surface-2); }
+.ss-menu-item::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.08) 0%,
+    rgba(0, 0, 0, 0.35) 55%,
+    rgba(0, 0, 0, 0.78) 100%
+  );
+  pointer-events: none;
+  transition: background 160ms var(--ss-ease);
+}
+.ss-menu-item:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+.ss-menu-item:hover::after {
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.0) 0%,
+    rgba(0, 0, 0, 0.25) 55%,
+    rgba(0, 0, 0, 0.7) 100%
+  );
+}
+.ss-menu-item:active { transform: translateY(0) scale(0.98); }
 .ss-menu-item:focus-visible {
   outline: none;
-  border-color: var(--ss-accent-line);
+  border-color: var(--ss-accent-hot);
 }
+
 .ss-menu-item-label {
-  flex: 1;
-  min-width: 0;
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  z-index: 2;
 }
+
 .ss-menu-item--active {
-  background: var(--ss-accent-soft);
-  border-color: var(--ss-accent-line);
-  color: #fff;
+  border-color: var(--ss-accent-hot);
+  box-shadow:
+    0 0 0 1px var(--ss-accent-hot) inset,
+    0 6px 18px rgba(167, 139, 250, 0.35);
 }
-.ss-menu-item--active:hover { background: rgba(167, 139, 250, 0.26); }
+.ss-menu-item--active::after {
+  background: linear-gradient(
+    180deg,
+    rgba(167, 139, 250, 0.18) 0%,
+    rgba(0, 0, 0, 0.3) 55%,
+    rgba(0, 0, 0, 0.78) 100%
+  );
+}
 
 /* ==== Animated "now playing" equalizer indicator ======================= */
 
+/* Rendered in the top-right corner of the active tile. Inside a frosted
+ * capsule so it reads cleanly against any of the 32 background gradients.
+ */
 .ss-eq {
+  position: absolute;
+  top: 6px;
+  right: 6px;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  width: 12px;
-  height: 12px;
-  flex-shrink: 0;
+  width: 18px;
+  height: 14px;
+  padding: 2px 3px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border-radius: 5px;
+  z-index: 3;
 }
 .ss-eq > span {
   width: 2px;
@@ -733,10 +797,6 @@ const CSS = `
   0%, 100% { height: 30%; }
   50%      { height: 100%; }
 }
-
-/* Zero-size placeholder preserving the left indent on inactive rows so
-   active / inactive items align to the same baseline. */
-.ss-eq--placeholder { width: 12px; height: 12px; }
 
 /* ==== Params dock ====================================================== */
 
