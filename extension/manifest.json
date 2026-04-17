@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "VisStack",
+  "description": "Audio-reactive visualizations overlaid on any web page.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Start visualizer"
+  },
+  "background": {
+    "service_worker": "background.ts",
+    "type": "module"
+  },
+  "permissions": [
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/main.ts"],
+      "run_at": "document_idle"
+    }
+  ],
+  "sandbox": {
+    "pages": ["viz.html"]
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["viz.html", "assets/*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

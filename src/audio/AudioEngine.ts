@@ -68,10 +68,32 @@ export class AudioEngine {
     };
   }
 
-  /** Must be called from a user gesture handler before the first play. */
+  /**
+   * Resume the AudioContext, throwing if Chrome's autoplay policy blocks us.
+   *
+   * Chrome does NOT reject `ctx.resume()` when autoplay is blocked — it
+   * returns a Promise that stays pending indefinitely until a user gesture
+   * lets the context transition to `running`. A plain `await resume()`
+   * therefore hangs forever, which means callers relying on rejection to
+   * show a "click to enable audio" UI never get the chance.
+   *
+   * Workaround: race resume() against a short timeout, then assert the
+   * state actually transitioned. Callers catch and show UI if it didn't.
+   */
   async ensureRunning(): Promise<void> {
-    if (this.ctx.state !== 'running') {
-      await this.ctx.resume();
+    // Read via a getter each time — `state` mutates asynchronously during
+    // the await below, but TS can't see that through control-flow analysis.
+    const state = (): AudioContextState => this.ctx.state;
+
+    if (state() === 'running') return;
+
+    await Promise.race([
+      this.ctx.resume(),
+      new Promise<void>((resolve) => setTimeout(resolve, 150)),
+    ]);
+
+    if (state() !== 'running') {
+      throw new Error('AudioContext blocked — needs user gesture');
     }
   }
 
@@ -94,18 +116,32 @@ export class AudioEngine {
   }
 
   /**
-   * Wire a MediaStream (e.g. from `navigator.mediaDevices.getDisplayMedia`)
-   * as the audio source. Audio flows: stream → MediaStreamSource → analyser.
+   * Wire a MediaStream (e.g. from `navigator.mediaDevices.getDisplayMedia`
+   * or `chrome.tabCapture`) as the audio source. Audio flows:
+   *   stream → MediaStreamSource → analyser
    *
-   * Crucially, the analyser is NOT connected to ctx.destination in stream
-   * mode — the captured tab/screen is already playing audio through the
-   * system's regular output, and routing it through our destination would
-   * duplicate it (echo, possible feedback).
+   * The caller decides whether the analyser should also drive the audio
+   * destination (speakers):
    *
-   * Returns the audio MediaStreamTrack so the caller can listen for `ended`
-   * (e.g. user clicks "Stop sharing" in the browser banner).
+   *   - getDisplayMedia (webapp): `routeToOutput: false` (default). The
+   *     source tab/screen is already playing through system output; a
+   *     destination connection here would duplicate it (echo, feedback).
+   *
+   *   - tabCapture (extension): `routeToOutput: true`. Chrome mutes the
+   *     source tab's speaker output while the tabCapture stream is being
+   *     consumed, so without a destination connection the user gets
+   *     silence. Routing the analyser to destination restores playback.
+   *     Relying on a hidden `<audio srcObject>` playthrough here is
+   *     unreliable because Chrome's autoplay policy may block `.play()`
+   *     by the time the async activation hops finish.
+   *
+   * Returns the audio MediaStreamTrack so the caller can listen for
+   * `ended` (e.g. user clicks "Stop sharing" in the browser banner).
    */
-  setSourceMediaStream(stream: MediaStream): MediaStreamTrack {
+  setSourceMediaStream(
+    stream: MediaStream,
+    options: { routeToOutput?: boolean } = {},
+  ): MediaStreamTrack {
     const audioTracks = stream.getAudioTracks();
     if (audioTracks.length === 0) {
       throw new Error(
@@ -118,7 +154,9 @@ export class AudioEngine {
     this.currentStream = stream;
     this.streamSource = this.ctx.createMediaStreamSource(stream);
     this.streamSource.connect(this.analyser);
-    // Deliberately no analyser → destination connection here
+    if (options.routeToOutput) {
+      this.analyser.connect(this.ctx.destination);
+    }
 
     return audioTracks[0];
   }

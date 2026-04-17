@@ -16,7 +16,8 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "types": ["chrome", "vite/client"]
   },
-  "include": ["src"]
+  "include": ["src", "extension"]
 }

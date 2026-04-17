@@ -61,8 +61,8 @@ export const CURATED_PRESETS: readonly StreamPreset[] = [
   },
   {
     id: 'live365-curtjazz',
-    name: 'Live365 — CurtJazz Radio',
-    description: 'Jazz (live365 token expires — grab a fresh URL if it stops)',
+    name: 'CurtJazz Radio',
+    description: 'Jazz (stream token expires — grab a fresh URL if it stops)',
     url: 'https://das-edge12-live365-dal02.cdnstream.com/a09856?listeningSessionId=MjVXSldUUlhKTjNIUTRONlNHWkNWS1JUS1VfZGFzLWVkZ2UxMi1saXZlMzY1LWRhbDAyLmNkbnN0cmVhbS5jb206ODE4Ng..&aw_0_1st.playerId=Live365-Widget&aw_0_1st.skey=1776240461130',
   },
 ];

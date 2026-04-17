@@ -370,9 +370,9 @@ function clampInt(raw: unknown, min: number, max: number, fallback: number): num
 
 export const crtPlugin: VisualizationPlugin = {
   id: 'crt',
-  name: 'CRT',
+  name: 'Vibrant Equalizer',
   description:
-    'FFT bars run through a retro CRT filter — scanlines, aberration, vignette, curvature.',
+    'Colorful spectrum bars with scanlines, soft color bleed, and a curved-glass glow.',
   params: {
     palette: {
       type: 'select',

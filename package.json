@@ -1,5 +1,5 @@
 {
-  "name": "soundstack-visualizer",
+  "name": "visstack",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "build:extension": "vite build --config vite.extension.config.ts",
+    "dev:extension": "vite build --config vite.extension.config.ts --watch"
   },
   "dependencies": {
     "butterchurn": "^2.6.7",
@@ -18,6 +20,8 @@
     "web-audio-beat-detector": "^8.2.14"
   },
   "devDependencies": {
+    "@crxjs/vite-plugin": "^2.0.0-beta.33",
+    "@types/chrome": "^0.1.40",
     "@types/node": "^25.6.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

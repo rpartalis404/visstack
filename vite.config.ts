@@ -39,7 +39,7 @@ function streamProxyPlugin() {
             // Mimic a generic streaming client so radio CDNs don't reject us
             headers: {
               'User-Agent':
-                'Mozilla/5.0 SoundstackVisualizer/0.1 (dev proxy)',
+                'Mozilla/5.0 VisStack/0.1 (dev proxy)',
               Accept: 'audio/*, */*;q=0.8',
             },
             redirect: 'follow',
