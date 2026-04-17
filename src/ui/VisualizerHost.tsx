@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { AudioEngine } from '../audio/AudioEngine';
+import type { VisualizerEngine } from '../audio/types';
 import type {
   MountedViz,
   ParamValues,
@@ -23,7 +23,7 @@ const STAGE_STYLE: React.CSSProperties = {
 };
 
 interface Props {
-  engine: AudioEngine;
+  engine: VisualizerEngine;
   plugin: VisualizationPlugin;
   params: ParamValues;
   /** Called once per frame with BPM + beat for the status pill to render. */

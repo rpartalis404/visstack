@@ -1,17 +1,19 @@
 /**
  * Background service worker.
  *
- * Handles the extension toolbar-icon click:
- *   1. Requests a `streamId` for the current tab via chrome.tabCapture.
- *      This does NOT show Chrome's screen-share banner — tabCapture uses
- *      the extension's install-time permission model instead.
- *   2. Sends the streamId to the content script (already loaded on every
- *      page via manifest.content_scripts) so it can build a MediaStream
- *      and feed the audio to our AudioEngine.
+ * Handles the extension toolbar-icon click: dispatch a single
+ * `VIZ_ACTIVATE` message to the active tab's content script.
  *
- * Service workers in MV3 are ephemeral — any state is transient. We pass
- * the streamId explicitly through messaging rather than relying on any
- * worker-local storage.
+ * The content script then acquires audio via `getDisplayMedia` (user
+ * picks a tab in Chrome's native picker) — see `content/mount.tsx`.
+ * We don't use `chrome.tabCapture` anymore: tabCapture *redirects*
+ * the source tab's audio into our stream, and Chrome silences any
+ * attempt to play it back from the same tab (to prevent a self-
+ * feedback loop). getDisplayMedia *duplicates* tab audio instead,
+ * so the source keeps playing normally and we just get a copy for
+ * analysis.
+ *
+ * Service workers in MV3 are ephemeral; we keep no state here.
  */
 
 chrome.action.onClicked.addListener(async (tab) => {
@@ -19,36 +21,13 @@ chrome.action.onClicked.addListener(async (tab) => {
 
   // Only meaningful on normal web pages — skip chrome:// / about: etc.
   if (!/^https?:\/\//.test(tab.url)) {
-    console.warn(
-      '[Soundstack] Cannot capture audio from non-http(s) page:',
-      tab.url,
-    );
-    return;
-  }
-
-  let streamId: string;
-  try {
-    streamId = await chrome.tabCapture.getMediaStreamId({
-      // The tab whose audio we want to capture
-      targetTabId: tab.id,
-      // The tab whose content script will call getUserMedia() with this id.
-      // Without this, Chrome rejects the downstream getUserMedia with
-      // "AbortError: Error starting tab capture" because streamIds issued
-      // to a service worker aren't usable in content scripts by default —
-      // they have to be scoped to a specific consumer tab explicitly.
-      consumerTabId: tab.id,
-    });
-  } catch (err) {
-    console.error('[Soundstack] getMediaStreamId failed:', err);
+    console.warn('[viz] Cannot activate on non-http(s) page:', tab.url);
     return;
   }
 
   try {
-    await chrome.tabs.sendMessage(tab.id, {
-      type: 'SOUNDSTACK_ACTIVATE',
-      streamId,
-    });
+    await chrome.tabs.sendMessage(tab.id, { type: 'VIZ_ACTIVATE' });
   } catch (err) {
-    console.error('[Soundstack] sendMessage failed:', err);
+    console.error('[viz] sendMessage failed:', err);
   }
 });

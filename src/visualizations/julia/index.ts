@@ -271,7 +271,7 @@ const FRAGMENT_SHADER = /* glsl */ `
 
 export const juliaPlugin: VisualizationPlugin = {
   id: 'julia',
-  name: 'Julia Bloom',
+  name: 'Julia Fractal',
   description:
     'Animated Julia-set fractal — morphs and breathes with the music. New-age psychedelia.',
   params: {

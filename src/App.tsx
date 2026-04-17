@@ -9,7 +9,7 @@ import { ParamPanel } from './ui/ParamPanel';
 import { AudioSourceBar } from './ui/AudioSourceBar';
 import styles from './App.module.css';
 
-const STORAGE_KEY = 'soundstack-viz-state-v1';
+const STORAGE_KEY = 'viz-state-v1';
 
 interface PersistedState {
   activeId: string;

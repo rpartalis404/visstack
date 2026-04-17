@@ -68,10 +68,32 @@ export class AudioEngine {
     };
   }
 
-  /** Must be called from a user gesture handler before the first play. */
+  /**
+   * Resume the AudioContext, throwing if Chrome's autoplay policy blocks us.
+   *
+   * Chrome does NOT reject `ctx.resume()` when autoplay is blocked — it
+   * returns a Promise that stays pending indefinitely until a user gesture
+   * lets the context transition to `running`. A plain `await resume()`
+   * therefore hangs forever, which means callers relying on rejection to
+   * show a "click to enable audio" UI never get the chance.
+   *
+   * Workaround: race resume() against a short timeout, then assert the
+   * state actually transitioned. Callers catch and show UI if it didn't.
+   */
   async ensureRunning(): Promise<void> {
-    if (this.ctx.state !== 'running') {
-      await this.ctx.resume();
+    // Read via a getter each time — `state` mutates asynchronously during
+    // the await below, but TS can't see that through control-flow analysis.
+    const state = (): AudioContextState => this.ctx.state;
+
+    if (state() === 'running') return;
+
+    await Promise.race([
+      this.ctx.resume(),
+      new Promise<void>((resolve) => setTimeout(resolve, 150)),
+    ]);
+
+    if (state() !== 'running') {
+      throw new Error('AudioContext blocked — needs user gesture');
     }
   }
 

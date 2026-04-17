@@ -30,3 +30,18 @@ export interface AudioFrame {
 
 /** A listener function that receives every emitted AudioFrame. */
 export type AudioFrameListener = (frame: AudioFrame) => void;
+
+/**
+ * Minimal interface consumed by `VisualizerHost` (the rAF loop) and
+ * plugins (via their `mount(container, { audioContext, analyser })`
+ * context). The webapp passes an `AudioEngine` directly; the extension's
+ * sandbox iframe passes a lightweight adapter that holds a suspended
+ * AudioContext (just for butterchurn's sampleRate) and returns frames
+ * postMessage'd from the content-script frame where the *real* audio
+ * pipeline lives.
+ */
+export interface VisualizerEngine {
+  ctx: AudioContext;
+  analyser: AnalyserNode;
+  getCurrentFrame(nowMs: number): AudioFrame;
+}

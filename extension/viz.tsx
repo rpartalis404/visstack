@@ -1,240 +1,274 @@
 /**
  * Sandboxed visualizer page — loaded in an <iframe> by the content script.
  *
- * Why sandboxed?
- *   Butterchurn (the "classic-trip" plugin) compiles MilkDrop preset
- *   expressions with new Function() at runtime. MV3 forbids unsafe-eval
+ * # Why sandboxed?
+ *   The butterchurn plugins (Astral Projection, Tide Pool, etc.)
+ *   compile MilkDrop preset expressions with new Function() at
+ *   runtime. MV3 forbids unsafe-eval
  *   in content scripts and in normal extension pages, but pages declared
  *   in manifest.sandbox.pages are served with a relaxed CSP that allows
- *   it. Rendering every plugin here too keeps the architecture uniform.
+ *   it. Rendering every plugin here keeps the architecture uniform.
  *
- * Why WebRTC loopback for audio?
- *   chrome.tabCapture scopes the streamId to the consumer tab's origin
- *   (live365.com). This iframe runs at a null origin, so it cannot call
- *   getUserMedia with the streamId directly — Chrome rejects with
- *   "Invalid security origin". Workaround: the content script acquires
- *   the stream in its own (matching) origin, sends the audio track to
- *   this iframe through a same-process RTCPeerConnection pair. No STUN,
- *   no network, finishes in a few hundred ms.
+ * # No audio here
+ *   The *real* AudioContext lives in the content script — it's created
+ *   synchronously inside the user's start click, which guarantees it
+ *   starts in the "running" state. Audio plays there. Each animation
+ *   frame the content script computes an `AudioFrame` (FFT + waveform +
+ *   bass/mid/treble/beat/etc.) and postMessages it into this iframe.
+ *
+ *   We still create a local AudioContext here, *but purely so butterchurn
+ *   can read its `sampleRate`*. No audio flows through it; it stays
+ *   suspended for the lifetime of the session. The plugin's Analyser
+ *   reference passed to it is equally unused — butterchurn gets its
+ *   samples from `render({ audioLevels })` (the non-graph path), fed
+ *   from the incoming AudioFrames. See the butterchurn plugin
+ *   factory (`src/visualizations/butterchurn/plugin.ts`) for details.
+ *
+ * # Why all this complexity?
+ *   Prior iterations used WebRTC loopback to push the audio track into
+ *   this iframe, then created an AudioContext here and called resume().
+ *   `AudioContext.resume()` in a sandboxed/cross-origin iframe doesn't
+ *   reliably honor `allow="autoplay"` — it stays pending indefinitely
+ *   and audio never starts. Moving the AudioContext to the content
+ *   script sidesteps that entirely. No WebRTC, no iframe-side
+ *   activation required.
+ *
+ * # Lifecycle
+ *   boot() → post VIZ_READY → parent replies with SET_ACTIVE_VIZ →
+ *   wait for the first AUDIO_FRAME (= user clicked Start in parent) →
+ *   create the local AudioContext + analyser → mount the React tree.
+ *   Every subsequent AUDIO_FRAME updates `latestFrame`, which our
+ *   adapter returns from `getCurrentFrame()` on every rAF tick.
  */
 import { createRoot } from 'react-dom/client';
-import { StrictMode } from 'react';
-import { AudioEngine } from '../src/audio/AudioEngine';
-import { ExtensionOverlay, type OverlayMode } from './content/ExtensionOverlay';
+import { StrictMode, useEffect, useState } from 'react';
+import { ExtensionOverlay } from './content/ExtensionOverlay';
+import { VISUALIZATIONS, getPluginById } from '../src/visualizations/registry';
+import {
+  defaultParamValues,
+  type ParamValues,
+  type VisualizationPlugin,
+} from '../src/visualizations/types';
+import type { AudioFrame, VisualizerEngine } from '../src/audio/types';
 
 type OutboundMessage =
   | { type: 'VIZ_READY' }
-  | { type: 'ANSWER'; sdp: string; typ: RTCSdpType }
-  | { type: 'ICE2'; candidate: RTCIceCandidateInit }
-  | { type: 'SOUNDSTACK_CLOSE' };
+  | { type: 'VIZ_CLOSE' }
+  | { type: 'ENGINE_ERROR'; message: string };
 
 type InboundMessage =
-  | { type: 'OFFER'; sdp: string; typ: RTCSdpType }
-  | { type: 'ICE1'; candidate: RTCIceCandidateInit };
+  | { type: 'SET_ACTIVE_VIZ'; id: string; params?: ParamValues }
+  | { type: 'SET_PARAMS'; params: ParamValues }
+  | { type: 'AUDIO_FRAME'; frame: AudioFrame };
 
 function postToParent(msg: OutboundMessage): void {
-  // Parent origin is live365 (or whatever host page); we authenticate
-  // sender identity via event.source, not origin, so targetOrigin '*'
-  // is acceptable. No secrets in outbound payloads.
+  // Parent origin is the host page; authenticate by sender identity
+  // (event.source === window.parent) rather than origin.
   window.parent.postMessage(msg, '*');
 }
 
 async function boot(): Promise<void> {
-  // Read static context (hero vs overlay) from the URL hash — the
-  // content script sets this when creating the iframe. Avoids a
-  // message round-trip before we can render.
-  const params = new URLSearchParams(window.location.hash.slice(1));
-  const mode: OverlayMode =
-    params.get('mode') === 'live365-hero' ? 'live365-hero' : 'overlay';
+  // Latest AudioFrame received from the parent — updated on each
+  // AUDIO_FRAME message, read on each rAF tick by VisualizerHost.
+  let latestFrame: AudioFrame | null = null;
 
-  // Same-device loopback peer — no ICE servers needed, local candidates
-  // are sufficient when both ends share the same process.
-  const pc2 = new RTCPeerConnection({ iceServers: [] });
-  let engineStarted = false;
-  // ICE candidates from pc1 can arrive before we finish setRemoteDescription.
-  // Buffer them until the remote description is set, otherwise
-  // addIceCandidate rejects.
-  const pendingIce: RTCIceCandidateInit[] = [];
-  let haveRemoteDesc = false;
+  // SET_ACTIVE_VIZ / SET_PARAMS can arrive before React has mounted
+  // (in response to VIZ_READY). We buffer both so the initial React
+  // mount uses the right plugin + values. Once React is mounted, we
+  // plug in live setters.
+  let pendingActiveId = VISUALIZATIONS[0].id;
+  let pendingParams: ParamValues = defaultParamValues(
+    (getPluginById(pendingActiveId) ?? VISUALIZATIONS[0]).params,
+  );
+  let activeIdSetter: ((id: string) => void) | null = null;
+  let paramsSetter: ((p: ParamValues) => void) | null = null;
 
-  pc2.onicecandidate = (ev) => {
-    if (ev.candidate) {
-      postToParent({ type: 'ICE2', candidate: ev.candidate.toJSON() });
-    }
-  };
+  // Gate the React mount on TWO signals:
+  //   1. the first SET_ACTIVE_VIZ (the parent's response to our
+  //      VIZ_READY), so `pendingActiveId` is the user's chosen plugin
+  //      and not the VISUALIZATIONS[0] default;
+  //   2. the first AUDIO_FRAME, so the local AudioContext can be
+  //      created at the parent's actual sampleRate and so we stay
+  //      blank until the user has clicked Start.
+  //
+  // Historically the mount was gated on AUDIO_FRAME alone. That
+  // produced a subtle race whenever the iframe booted while the parent
+  // was already streaming frames (e.g. after any event that reloads
+  // the iframe): an AUDIO_FRAME could arrive in the same task queue
+  // tick as VIZ_READY's round-trip, resolve the frame promise, and let
+  // boot() mount React with the default plugin before SET_ACTIVE_VIZ
+  // ever reached us. Gating on both closes the race.
+  let resolveFirstFrame: (frame: AudioFrame) => void = () => undefined;
+  const firstFramePromise = new Promise<AudioFrame>((resolve) => {
+    resolveFirstFrame = resolve;
+  });
 
-  pc2.ontrack = (ev) => {
-    if (engineStarted) return;
-    engineStarted = true;
-    const [remoteStream] = ev.streams;
-    if (!remoteStream) {
-      fatal('peer connection ontrack fired without a stream');
-      return;
-    }
-    void startEngine(remoteStream);
-  };
+  let resolveActiveVizReady: () => void = () => undefined;
+  const activeVizReadyPromise = new Promise<void>((resolve) => {
+    resolveActiveVizReady = resolve;
+  });
 
-  window.addEventListener('message', async (ev) => {
+  window.addEventListener('message', (ev) => {
     if (ev.source !== window.parent) return;
     const data = ev.data as InboundMessage | undefined;
     if (!data || typeof data !== 'object') return;
-    try {
-      if (data.type === 'OFFER') {
-        await pc2.setRemoteDescription({ type: data.typ, sdp: data.sdp });
-        haveRemoteDesc = true;
-        for (const c of pendingIce) {
-          await pc2.addIceCandidate(c);
+    switch (data.type) {
+      case 'SET_ACTIVE_VIZ':
+        // Always update the pending buffer first — if a message races
+        // past React's mount-side setter wiring, pendingActiveId still
+        // reflects the latest truth and any subsequent mount reads it.
+        pendingActiveId = data.id;
+        if (data.params !== undefined) pendingParams = data.params;
+        if (activeIdSetter) activeIdSetter(data.id);
+        if (data.params !== undefined && paramsSetter) {
+          paramsSetter(data.params);
         }
-        pendingIce.length = 0;
-        const answer = await pc2.createAnswer();
-        await pc2.setLocalDescription(answer);
-        postToParent({ type: 'ANSWER', sdp: answer.sdp ?? '', typ: answer.type });
-      } else if (data.type === 'ICE1') {
-        if (haveRemoteDesc) {
-          await pc2.addIceCandidate(data.candidate);
-        } else {
-          pendingIce.push(data.candidate);
-        }
+        // Resolving an already-resolved Promise is a no-op, so it's
+        // safe to call this unconditionally on every SET_ACTIVE_VIZ.
+        resolveActiveVizReady();
+        break;
+      case 'SET_PARAMS':
+        pendingParams = data.params;
+        if (paramsSetter) paramsSetter(data.params);
+        break;
+      case 'AUDIO_FRAME': {
+        const wasNull = latestFrame === null;
+        latestFrame = data.frame;
+        if (wasNull) resolveFirstFrame(data.frame);
+        break;
       }
-    } catch (err) {
-      console.error('[Soundstack viz] signaling error:', err);
     }
   });
 
-  async function startEngine(stream: MediaStream): Promise<void> {
-    const engine = new AudioEngine();
-    // routeToOutput: true — connect analyser to ctx.destination so audio
-    // actually plays back to the user's speakers.
-    engine.setSourceMediaStream(stream, { routeToOutput: true });
+  postToParent({ type: 'VIZ_READY' });
 
-    // AudioContext.resume() requires user activation. The toolbar-icon
-    // click grants activation to the content-script frame (which is why
-    // getUserMedia up there worked), but it doesn't propagate into this
-    // sandboxed iframe — it runs at a null origin. Try resume anyway in
-    // case a gesture is somehow available, and fall back to a one-shot
-    // click-to-start overlay when Chrome blocks us.
+  // Wait for both signals. SET_ACTIVE_VIZ arrives fast (parent replies
+  // to VIZ_READY synchronously in its message handler). AUDIO_FRAME
+  // only arrives after the user clicks Start — which is the gate we
+  // actually want to hold the blank iframe behind.
+  await activeVizReadyPromise;
+  const firstFrame = await firstFramePromise;
+
+  // Build a local AudioContext and AnalyserNode. Neither processes any
+  // audio — butterchurn just needs them to exist (for sampleRate and
+  // its constructor's internal delay/analyser graph). The AnalyserNode
+  // is passed through the plugin context but not actually read by
+  // butterchurn, since we've switched it to the `updateAudio` path
+  // that takes time-domain byte arrays directly (see the butterchurn
+  // plugin factory).
+  let ctx: AudioContext;
+  let analyser: AnalyserNode;
+  try {
+    // Try to match the parent's sampleRate so butterchurn's frequency
+    // bucket math lines up with the real audio. Fall back to the
+    // browser default if the rate isn't supported here.
     try {
-      await engine.ensureRunning();
-    } catch (err) {
-      console.warn('[Soundstack viz] initial resume blocked, awaiting click:', err);
-      await waitForUserClickToStart();
-      try {
-        await engine.ensureRunning();
-      } catch (err2) {
-        fatal(`audio context refused to start: ${(err2 as Error).message}`);
-        return;
-      }
+      ctx = new AudioContext({ sampleRate: firstFrame.sampleRate });
+    } catch {
+      ctx = new AudioContext();
     }
-
-    const [track] = stream.getAudioTracks();
-    if (track) {
-      // If Chrome tears down the capture (user clicks away / closes tab)
-      // the track ends — tell the parent to destroy us.
-      track.addEventListener('ended', () =>
-        postToParent({ type: 'SOUNDSTACK_CLOSE' }),
-      );
-    }
-
-    const rootEl = document.getElementById('root');
-    if (!rootEl) {
-      fatal('#root element missing in viz.html');
-      return;
-    }
-    const root = createRoot(rootEl);
-    root.render(
-      <StrictMode>
-        <ExtensionOverlay
-          engine={engine}
-          context={{ mode }}
-          onClose={() => postToParent({ type: 'SOUNDSTACK_CLOSE' })}
-        />
-      </StrictMode>,
-    );
-
-    // Best-effort cleanup on iframe unload. Not critical — the parent
-    // will also stop the stream's tracks on its side when it tears us
-    // down — but drops the tab-capture indicator more promptly.
-    window.addEventListener('pagehide', () => {
-      stream.getTracks().forEach((t) => t.stop());
-      engine.destroy();
-      try {
-        pc2.close();
-      } catch {
-        /* already closed */
-      }
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+  } catch (err) {
+    postToParent({
+      type: 'ENGINE_ERROR',
+      message: `Failed to create local AudioContext: ${(err as Error).message}`,
     });
+    return;
   }
 
-  // Let the parent know we're ready to negotiate.
-  postToParent({ type: 'VIZ_READY' });
+  // Lightweight adapter matching VisualizerEngine. getCurrentFrame()
+  // returns the most recent frame the parent sent us; on the rare
+  // chance of a race (tick fires between firstFrame and the next
+  // AUDIO_FRAME clobbering latestFrame), we fall back to firstFrame.
+  const engine: VisualizerEngine = {
+    ctx,
+    analyser,
+    getCurrentFrame(_nowMs: number): AudioFrame {
+      return latestFrame ?? firstFrame;
+    },
+  };
+
+  const rootEl = document.getElementById('root');
+  if (!rootEl) {
+    postToParent({ type: 'ENGINE_ERROR', message: '#root missing in viz.html' });
+    return;
+  }
+
+  createRoot(rootEl).render(
+    <StrictMode>
+      <VizApp
+        engine={engine}
+        initialActiveId={pendingActiveId}
+        initialParams={pendingParams}
+        attachSetActiveId={(setter) => {
+          activeIdSetter = setter;
+        }}
+        attachSetParams={(setter) => {
+          paramsSetter = setter;
+        }}
+      />
+    </StrictMode>,
+  );
+
+  // Best-effort cleanup on iframe unload. The parent tears us down
+  // authoritatively via destroy(); this just closes the local context
+  // promptly so no "tab is using audio" indicator lingers.
+  window.addEventListener('pagehide', () => {
+    try {
+      void ctx.close();
+    } catch {
+      /* already closed */
+    }
+  });
+}
+
+interface VizAppProps {
+  engine: VisualizerEngine;
+  initialActiveId: string;
+  initialParams: ParamValues;
+  attachSetActiveId: (setter: (id: string) => void) => void;
+  attachSetParams: (setter: (p: ParamValues) => void) => void;
 }
 
 /**
- * Render a centered "click to enable audio" overlay and resolve once the
- * user clicks. Used when Chrome's autoplay policy blocks our first
- * attempt to resume the AudioContext.
+ * Thin wrapper holding the activeId + current params in React state so
+ * incoming SET_ACTIVE_VIZ / SET_PARAMS messages can swap plugins and
+ * tweak values without remounting the engine. Also listens for Escape
+ * in the iframe's own document, since the parent's keydown listener
+ * doesn't see keys when the iframe has focus (rare, but possible via
+ * Tab navigation).
  */
-function waitForUserClickToStart(): Promise<void> {
-  return new Promise((resolve) => {
-    const overlay = document.createElement('div');
-    overlay.setAttribute('data-soundstack', 'start-overlay');
-    overlay.style.cssText = [
-      'position: absolute',
-      'inset: 0',
-      'display: flex',
-      'align-items: center',
-      'justify-content: center',
-      'background: rgba(14,14,21,0.85)',
-      'color: #fff',
-      "font: 14px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif",
-      'cursor: pointer',
-      'z-index: 9999',
-      '-webkit-backdrop-filter: blur(8px)',
-      'backdrop-filter: blur(8px)',
-    ].join(';');
-    overlay.innerHTML = `
-      <div style="padding: 14px 20px; border: 1px solid rgba(255,255,255,0.12);
-                  border-radius: 8px; background: rgba(10,10,16,0.65);
-                  text-align: center;">
-        <div style="font-weight: 500; margin-bottom: 4px;">
-          Click to enable audio
-        </div>
-        <div style="opacity: 0.65; font-size: 12px;">
-          Chrome blocks autoplay across sandboxed frames
-        </div>
-      </div>
-    `;
-    overlay.addEventListener(
-      'click',
-      () => {
-        overlay.remove();
-        resolve();
-      },
-      { once: true },
-    );
-    document.body.appendChild(overlay);
-  });
-}
+function VizApp({
+  engine,
+  initialActiveId,
+  initialParams,
+  attachSetActiveId,
+  attachSetParams,
+}: VizAppProps) {
+  const [activeId, setActiveId] = useState(initialActiveId);
+  const [params, setParams] = useState<ParamValues>(initialParams);
 
-function fatal(message: string): void {
-  const msg = `[Soundstack viz] ${message}`;
-  console.error(msg);
-  document.body.innerHTML = `
-    <div style="position:absolute;inset:0;display:flex;align-items:center;
-                justify-content:center;padding:16px;box-sizing:border-box;
-                font:13px/1.4 system-ui,-apple-system,'Segoe UI',sans-serif;
-                color:#fff;background:rgba(24,18,32,0.82);text-align:center;">
-      ${escapeHtml(msg)}
-    </div>
-  `;
-}
+  useEffect(() => {
+    attachSetActiveId(setActiveId);
+  }, [attachSetActiveId]);
 
-function escapeHtml(s: string): string {
-  return s.replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
-  );
+  useEffect(() => {
+    attachSetParams(setParams);
+  }, [attachSetParams]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') postToParent({ type: 'VIZ_CLOSE' });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const plugin: VisualizationPlugin =
+    getPluginById(activeId) ?? VISUALIZATIONS[0];
+
+  return <ExtensionOverlay engine={engine} plugin={plugin} params={params} />;
 }
 
 void boot();
