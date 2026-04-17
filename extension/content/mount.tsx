@@ -149,54 +149,88 @@ export async function mountVisualizer(): Promise<VizRoot> {
     onClose: () => destroy(),
   });
 
-  // Fullscreen toggle — deliberately simple.
+  // Fullscreen toggle.
   //
-  // We fullscreen `host.outer` IN PLACE. No re-parenting, no DOM moves.
+  // ## Why we re-parent to document.body before going fullscreen
   //
-  // ## Why this is safe (modern Chrome, ~108+)
+  // Host pages like live365 have `transform` (or `filter`, or
+  // `will-change: transform`) on some ancestor of the hero slot. Any
+  // transformed ancestor creates a new containing block even for
+  // top-layer elements on some Chrome builds — so the fullscreen
+  // element's `width: 100%` resolves to that ancestor's box instead of
+  // the viewport. Visually: a letterbox of the original slot size,
+  // centered in a black void. The grey-bars bug.
   //
-  // Fullscreen elements render in the "top layer", which per spec uses
-  // the initial containing block (the viewport) regardless of ancestor
-  // `transform`/`filter`/`will-change` rules that would normally create
-  // a new containing block for `position: fixed` descendants. So the
-  // host page's transformed ancestors — a real constraint on live365
-  // and similar hosts — no longer matter.
+  // The fix: move `host.outer` to `document.body` (no transformed
+  // ancestors there) BEFORE calling requestFullscreen, then move it
+  // back on exit. Spec-correct browsers don't need this — but in
+  // practice on live365 it's required.
   //
-  // ## Why the re-parenting dance had to go
+  // ## About the iframe reload
   //
-  // A previous version moved `host.outer` to `document.body` before
-  // requesting fullscreen to dodge the transformed-ancestor issue, then
-  // moved it back on exit. Moving an element containing an iframe via
-  // `appendChild` triggers a long-standing Chromium quirk: the iframe
-  // sometimes re-navigates, even within the same document. On reload
-  // the iframe re-runs its boot sequence — and because the parent's
-  // rAF loop is already streaming AUDIO_FRAME messages, the iframe
-  // could race past SET_ACTIVE_VIZ and mount React with the default
-  // plugin instead of the one the user picked. That's the "reverts to
-  // default" bug.
-  //
-  // Removing the move eliminates the reload, eliminates the race, and
-  // dramatically simplifies this code. `viz.tsx` also now gates its
-  // React mount on both SET_ACTIVE_VIZ and the first AUDIO_FRAME as a
-  // belt-and-suspenders guard against any future reload (from e.g. a
-  // user action that we can't anticipate here).
+  // Moving a node that contains an iframe via appendChild can trigger
+  // Chrome to re-navigate the iframe. That used to cause a "reverts
+  // to default viz" bug: the reloaded iframe would run its boot
+  // sequence, see an incoming AUDIO_FRAME before the parent's
+  // SET_ACTIVE_VIZ response arrived, and mount React with the default
+  // plugin. `viz.tsx`'s boot now explicitly awaits both the first
+  // SET_ACTIVE_VIZ AND the first AUDIO_FRAME before mounting React,
+  // so even if this move re-navigates the iframe, nothing resets.
   //
   // ## "Sharing this tab" banner
   //
-  // While `getDisplayMedia` is active, Chrome keeps the sharing banner
-  // visible during fullscreen for security. That's a browser-level
-  // constraint; everything below the banner goes fullscreen normally.
+  // While getDisplayMedia is active Chrome keeps the sharing banner
+  // pinned, including during fullscreen. That's a browser-level
+  // security indicator we cannot suppress from an extension. The only
+  // way to eliminate it is a different distribution form (desktop).
+  let savedParent: Node | null = null;
+  let savedNextSibling: Node | null = null;
+
+  const restoreHostLocation = (): void => {
+    if (!savedParent) return;
+    if (savedNextSibling && savedNextSibling.parentNode === savedParent) {
+      savedParent.insertBefore(host.outer, savedNextSibling);
+    } else {
+      savedParent.appendChild(host.outer);
+    }
+    savedParent = null;
+    savedNextSibling = null;
+  };
+
   const toggleFullscreen = async (): Promise<void> => {
-    try {
-      if (document.fullscreenElement) {
+    if (document.fullscreenElement) {
+      try {
         await document.exitFullscreen();
-      } else {
-        await host.outer.requestFullscreen({ navigationUI: 'hide' });
+      } catch (err) {
+        console.warn('[viz] exitFullscreen failed:', err);
       }
+      return;
+    }
+
+    savedParent = host.outer.parentNode;
+    savedNextSibling = host.outer.nextSibling;
+    document.body.appendChild(host.outer);
+
+    try {
+      await host.outer.requestFullscreen({ navigationUI: 'hide' });
     } catch (err) {
-      console.warn('[viz] fullscreen toggle failed:', err);
+      console.warn('[viz] requestFullscreen failed:', err);
+      // Request rejected (e.g. no user activation). Put the host
+      // back immediately so we don't leave it stranded at document.body.
+      restoreHostLocation();
     }
   };
+
+  // On fullscreen exit (user hits Esc, clicks our toggle, or anything
+  // else that drops out of fullscreen), restore host.outer to its
+  // original slot. Firing on both enter and exit; only the exit case
+  // has work to do.
+  const onFullscreenChange = (): void => {
+    if (!document.fullscreenElement) {
+      restoreHostLocation();
+    }
+  };
+  document.addEventListener('fullscreenchange', onFullscreenChange);
 
   // --- Audio startup ---------------------------------------------------
   //
@@ -327,12 +361,16 @@ export async function mountVisualizer(): Promise<VizRoot> {
     cancelAnimationFrame(rafHandle);
     window.removeEventListener('message', onMessage);
     window.removeEventListener('keydown', onKey);
+    document.removeEventListener('fullscreenchange', onFullscreenChange);
     // Exit fullscreen if the user closes while fullscreen is active,
     // otherwise Chrome would keep the (now-disconnected) host in the
     // top layer and the page gets stuck in fullscreen briefly.
     if (document.fullscreenElement) {
       void document.exitFullscreen().catch(() => undefined);
     }
+    // If we were mid-fullscreen, the fullscreenchange listener we just
+    // removed won't fire to restore the location. Put host back manually.
+    restoreHostLocation();
     if (capturedStream) {
       capturedStream.getTracks().forEach((t) => t.stop());
       capturedStream = null;
