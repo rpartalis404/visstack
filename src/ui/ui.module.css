@@ -173,6 +173,336 @@
   background: #361723;
 }
 
+/* ---------- Source panel (sidebar top) ---------- */
+
+.sourcePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Big gradient-bordered idle CTA — the primary "get started" affordance
+   for webapp visitors who haven't captured audio yet. */
+.captureCta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  background: linear-gradient(
+    135deg,
+    rgba(167, 139, 250, 0.15) 0%,
+    rgba(244, 114, 182, 0.06) 50%,
+    rgba(34, 211, 238, 0.09) 100%
+  );
+  color: #f5f5f7;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 160ms ease, background 160ms ease, box-shadow 220ms ease;
+}
+
+.captureCta:hover {
+  transform: translateY(-1px);
+  border-color: rgba(167, 139, 250, 0.6);
+  background: linear-gradient(
+    135deg,
+    rgba(167, 139, 250, 0.24) 0%,
+    rgba(244, 114, 182, 0.1) 50%,
+    rgba(34, 211, 238, 0.14) 100%
+  );
+  box-shadow: 0 10px 28px rgba(167, 139, 250, 0.22);
+}
+
+.captureCta:active {
+  transform: scale(0.98);
+}
+
+.captureCtaIcon {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: linear-gradient(
+    135deg,
+    #a78bfa 0%,
+    #f472b6 55%,
+    #22d3ee 100%
+  );
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(167, 139, 250, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.captureCtaText {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.captureCtaTitle {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #fff;
+}
+
+.captureCtaDesc {
+  font-size: 11.5px;
+  color: rgba(232, 232, 239, 0.6);
+  line-height: 1.38;
+}
+
+/* Secondary "or load audio file" link under the CTA */
+.fileLink {
+  margin: 0;
+  padding: 8px 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  color: rgba(232, 232, 239, 0.5);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: color 140ms ease;
+  font: inherit;
+}
+
+.fileLink:hover {
+  color: rgba(232, 232, 239, 0.92);
+}
+
+.fileLink svg {
+  flex-shrink: 0;
+}
+
+/* Active state — compact "now playing" strip replaces the idle CTA */
+.sourcePanelActive {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(167, 139, 250, 0.32);
+  background: linear-gradient(
+    135deg,
+    rgba(167, 139, 250, 0.14) 0%,
+    rgba(34, 211, 238, 0.06) 100%
+  );
+}
+
+.sourcePanelActiveIcon {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(167, 139, 250, 0.18);
+}
+
+.sourcePanelActiveText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sourcePanelActiveStatus {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(196, 181, 253, 0.85);
+  font-weight: 600;
+}
+
+.sourcePanelActiveLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sourcePanelStop {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: #e8e8ef;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease,
+    color 140ms ease;
+}
+
+.sourcePanelStop:hover {
+  background: rgba(255, 107, 107, 0.15);
+  border-color: rgba(255, 107, 107, 0.4);
+  color: #ff6b6b;
+}
+
+.sourcePanelEq {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  width: 14px;
+  height: 12px;
+}
+
+.sourcePanelEq > span {
+  width: 2.5px;
+  background: #c4b5fd;
+  border-radius: 1px;
+  animation: sourceEq 1s ease-in-out infinite;
+  transform-origin: bottom;
+}
+
+.sourcePanelEq > span:nth-child(1) {
+  animation-delay: 0ms;
+}
+.sourcePanelEq > span:nth-child(2) {
+  animation-delay: 150ms;
+}
+.sourcePanelEq > span:nth-child(3) {
+  animation-delay: 300ms;
+}
+
+@keyframes sourceEq {
+  0%,
+  100% {
+    height: 30%;
+  }
+  50% {
+    height: 100%;
+  }
+}
+
+/* ---------- Welcome overlay (first-visit callout) ---------- */
+
+.welcomeOverlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: linear-gradient(
+    135deg,
+    rgba(6, 6, 11, 0.55) 0%,
+    rgba(10, 10, 18, 0.75) 100%
+  );
+  backdrop-filter: blur(10px) saturate(1.1);
+  -webkit-backdrop-filter: blur(10px) saturate(1.1);
+  z-index: 10;
+  animation: welcomeFade 320ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes welcomeFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.welcomeCard {
+  max-width: 420px;
+  padding: 32px 32px 28px;
+  text-align: center;
+  background: rgba(14, 14, 22, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55),
+    0 4px 12px rgba(0, 0, 0, 0.3);
+  animation: welcomePop 360ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes welcomePop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.welcomeLogo {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  margin: 0 auto 18px;
+  background: linear-gradient(
+    135deg,
+    #a78bfa 0%,
+    #f472b6 50%,
+    #22d3ee 100%
+  );
+  box-shadow: 0 10px 28px rgba(167, 139, 250, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.welcomeTitle {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 10px;
+  color: #fff;
+}
+
+.welcomeBody {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: rgba(232, 232, 239, 0.7);
+  margin: 0 0 22px;
+}
+
+.welcomeBody strong {
+  color: #fff;
+  font-weight: 600;
+}
+
+.welcomeDismiss {
+  padding: 10px 22px;
+  border-radius: 9px;
+  border: 1px solid rgba(167, 139, 250, 0.5);
+  background: rgba(167, 139, 250, 0.18);
+  color: #c4b5fd;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 160ms ease, border-color 160ms ease,
+    transform 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.welcomeDismiss:hover {
+  background: rgba(167, 139, 250, 0.28);
+  border-color: rgba(167, 139, 250, 0.72);
+}
+
+.welcomeDismiss:active {
+  transform: scale(0.97);
+}
+
 /* ---------- Switcher ---------- */
 
 .switcher {

@@ -7,9 +7,12 @@ import { VisualizerHost } from './ui/VisualizerHost';
 import { Switcher } from './ui/Switcher';
 import { ParamPanel } from './ui/ParamPanel';
 import { AudioSourceBar } from './ui/AudioSourceBar';
+import { SourcePanel } from './ui/SourcePanel';
 import styles from './App.module.css';
+import uiStyles from './ui/ui.module.css';
 
 const STORAGE_KEY = 'viz-state-v1';
+const WELCOME_KEY = 'viz-welcome-dismissed-v1';
 
 interface PersistedState {
   activeId: string;
@@ -73,6 +76,24 @@ export function App() {
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
+  // First-visit welcome overlay. Dismissed either explicitly via the
+  // "Got it" button or implicitly when the user opens a source. Sticky
+  // across sessions via localStorage.
+  const [welcomeDismissed, setWelcomeDismissed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(WELCOME_KEY) === '1';
+    } catch {
+      return true; // storage disabled → don't badger the user
+    }
+  });
+  const dismissWelcome = useCallback(() => {
+    setWelcomeDismissed(true);
+    try {
+      localStorage.setItem(WELCOME_KEY, '1');
+    } catch {
+      /* storage disabled — fine, just won't persist */
+    }
+  }, []);
   const stageRef = useRef<HTMLDivElement>(null);
   /** Track the active capture's audio track so we can stop it on unmount
    *  and listen for it ending (user clicks "Stop sharing" in the browser
@@ -159,6 +180,7 @@ export function App() {
   const handleLoadUrl = useCallback(
     async (url: string) => {
       setErrorMsg('');
+      dismissWelcome();
       engine.setSourceUrl(url);
       setSourceLabel(url);
       setCurrentUrl(url);
@@ -171,12 +193,13 @@ export function App() {
         setErrorMsg(`Playback blocked: ${(err as Error).message}`);
       }
     },
-    [engine, pushRecent],
+    [engine, pushRecent, dismissWelcome],
   );
 
   const handleLoadFile = useCallback(
     async (file: File) => {
       setErrorMsg('');
+      dismissWelcome();
       engine.setSourceFile(file);
       setSourceLabel(file.name);
       // Local files don't go into recents — they'd be unloadable next session
@@ -187,7 +210,7 @@ export function App() {
         setErrorMsg(`Playback blocked: ${(err as Error).message}`);
       }
     },
-    [engine],
+    [engine, dismissWelcome],
   );
 
   const handleBookmarkCurrent = useCallback(() => {
@@ -205,6 +228,9 @@ export function App() {
 
   const handleCaptureSystemAudio = useCallback(async () => {
     setErrorMsg('');
+    // Clicking Capture (even if the user later cancels the picker) counts
+    // as acknowledging the welcome — no need to show it again next visit.
+    dismissWelcome();
     try {
       // Must request video too — Chrome's getDisplayMedia requires it to
       // show the screen-share picker. We discard the video track immediately.
@@ -250,7 +276,7 @@ export function App() {
         setErrorMsg(`Capture failed: ${e.message}`);
       }
     }
-  }, [engine]);
+  }, [engine, dismissWelcome]);
 
   // Stop the capture track on unmount (prevents zombie streams)
   useEffect(() => {
@@ -345,6 +371,13 @@ export function App() {
       </div>
 
       <div className={styles.sidebar}>
+        <SourcePanel
+          isCapturing={isCapturing}
+          sourceLabel={sourceLabel}
+          onCapture={handleCaptureSystemAudio}
+          onLoadFile={handleLoadFile}
+          onStopCapture={handleStopCapture}
+        />
         <Switcher
           visualizations={VISUALIZATIONS}
           activeId={activePlugin.id}
@@ -377,6 +410,28 @@ export function App() {
         {errorMsg && (
           <div className={styles.errorBanner} role="alert">
             {errorMsg}
+          </div>
+        )}
+        {/* First-visit welcome overlay. Shown only when no source is
+            loaded AND the user hasn't acknowledged it before. */}
+        {!sourceLabel && !welcomeDismissed && (
+          <div className={uiStyles.welcomeOverlay}>
+            <div className={uiStyles.welcomeCard}>
+              <div className={uiStyles.welcomeLogo} aria-hidden />
+              <h2 className={uiStyles.welcomeTitle}>Welcome to VisStack</h2>
+              <p className={uiStyles.welcomeBody}>
+                32 audio-reactive visualizations for any tab playing audio.
+                Hit <strong>Capture tab audio</strong> on the left to pick
+                a source and start visualizing.
+              </p>
+              <button
+                type="button"
+                className={uiStyles.welcomeDismiss}
+                onClick={dismissWelcome}
+              >
+                Got it
+              </button>
+            </div>
           </div>
         )}
       </div>
